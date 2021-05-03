@@ -1,0 +1,13 @@
+[Unit]
+Description=Auto CD Rip
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/media-magic.sh
+
+#ExecStop=killall media-magic.sh ; killall abcde
+# Don't actually want this, as a `oneshot` without `RemainAfterExit` will
+# always do an `ExecStop` block upon the completion of the `ExecStart`.
+
+# May want to configure this differently, per:
+# https://trstringer.com/simple-vs-oneshot-systemd-service/
