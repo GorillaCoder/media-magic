@@ -18,10 +18,12 @@ PROGDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd)
 
 #───────────────────────────────( dependencies )────────────────────────────────
 declare -a deps=(
-   # Email notification dependencies:
-   gpg msmtp msmtp-mta mailutils
+   # General dependencies:
+   nginx
+
    # ABCDE dependencies:
-   abcde lame eyed3 glyrc imagemagick cdparanoia flac cdrecord cd-diskid wodi
+   abcde lame eyed3 glyrc imagemagick
+   cdparanoia flac cdrecord cd-diskid wodi
 )
 
 sudo apt-get update -y
@@ -33,8 +35,22 @@ echo "Copying configuration & script files..."
 function install_to {
    mode=$1 ; src=$2 ; des=$3
    echo "  ...copying ${src} -> ${dest}"
-   sudo install -m $mode "${PROGDIR}/${src}" "${dest}"
+
+   install_params=(
+      -D                   # Create intermediate directories if not found
+      -m $mode             # chmod
+      -o giuliano          # chown (user)
+      -g giuliano          # chown (group)
+      --backup -S '.bak'   # If $dest exists, backup as ${dest}.bak
+      "${PROGDIR}/${src}"
+      "${dest}" 
+   )
+
+   sudo install "${install_params[@]}"
 }
+
+# `media-magic` bash script
+install_to 755 "${PROGDIR}/media-magic.sh" "/usr/local/bin/"
 
 # `abcde` config file:
 install_to 644 "abcde.conf" "/etc/"
@@ -45,31 +61,24 @@ install_to 644 "99-media-magic.rules" "/etc/udev/rules.d/"
 # `systemd` service:
 install_to 644 "${PROGDIR}/media-magic.service"  "/etc/systemd/system/"
 
-# `media-magic` bash script
-install_to 755 "${PROGDIR}/media-magic.sh" "/usr/local/bin/"
+# `nginx` config
+install_to 644 "${PROGDIR}/media-magic.conf" "/etc/nginx/conf.d/"
 
-# `msmtp` configuration file
-install_to 600 "${PROGDIR}/msmtprc" "${HOME}/.msmtprc"
+# `media-magic.sh`'s own config file
+install_to 644 "${PROGDIR}/config" "${XDG_CONFIG_HOME:-${HOME}/.config}/media-magic/"
 
 #────────────────────────────────( load rules )─────────────────────────────────
 # Load rule(s):
-echo "Reloading udev to load new rule..."
+echo "Reloading udev to load new rule"
 sudo udevadm control --reload
 
 # Reload systemctl:
+echo "Reloading systemctl"
 sudo systemctl daemon-reload
 
 #────────────────────────────────( next steps )─────────────────────────────────
 echo "Next steps:"
 echo " 1) Edit base deploy directory in /etc/abcde.conf (line 393)"
 echo "    e.g., /media/CDs/raw/"
-echo " 2) Edit default paths in /usr/local/bin/media-magic.sh"
-echo "    - EMAIL_ADDR     (71)"
-echo "    - OUTPUT_CDS     (72)"
-echo "    - OUTPUT_DVDS    (73)"
-echo " 3) Edit defaults in $HOME/.msmtprc"
-echo "    - EMAIL_SERVER   (4)"
-echo "    - SERVICE_EMAIL_ADDRESS (10)"
-echo " 4) Generate gpg key with no password for mail password decryption"
-echo "    - Expected password location '${HOME}/.msmtp-password.gpg"
+echo " 2) Edit default paths in ${XDG_CONFIG_HOME:-${HOME}/.config}/media-magic/config"
 echo -e "\nGodspeed.\n"

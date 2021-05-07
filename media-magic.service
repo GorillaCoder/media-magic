@@ -3,6 +3,8 @@ Description=Auto CD Rip
 
 [Service]
 Type=simple
+User=giuliano
+Group=giuliano
 ExecStart=/usr/local/bin/media-magic.sh
 
 #ExecStop=killall media-magic.sh ; killall abcde
