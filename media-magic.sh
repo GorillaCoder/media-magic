@@ -7,20 +7,6 @@
 #  2021-05-04  :: Removed email notification system. Swapped w/ creating .html
 #                 files to serve. More elegant. Unified to single database file
 #
-#────────────────────────────────( description )─────────────────────────────{{{
-#  if cd.id is in database:
-#     eject
-#     play_locally(cd.id)
-#  else:
-#     if cd.type == 'CD':
-#        rip_cd(cd)
-#     elif cd.type == 'DVD':
-#        rip_dvd(cd)
-#     else:
-#        fail_spectacularly()
-#     add_to_db(cd_id)
-#
-#}}}
 #───────────────────────────────────( exits )────────────────────────────────{{{
 # My exits:
 #  1  :: Disk type not 'CD' or 'DVD'
@@ -38,19 +24,27 @@
 #}}}
 #───────────────────────────────────( todo )─────────────────────────────────{{{
 #  1) Generate a single-file archival copy for music
-#
+#  2) Swap my exit statues to negative values to make unique
+#  3) Maybe start a tmux session (if none exists), and run the script within it.
+#     Can then easily check the ongoing status on any machine, getting more than
+#     only a snapshot with `systemctl status`.
 #}}}
 #═══════════════════════════════════╡ INIT ╞════════════════════════════════════
+_debug=true
+
+# Are we root? Fuckin' better be.
 [[ $(id -u) -ne 0 ]] && exit 7
 
 trap 'cleanup $?' EXIT INT
 
 function cleanup {
    umount "$DVD_MOUNTPOINT" 2>/dev/null
-   eject
+   # DEBUG:
+   #eject
 
-   # {{{
-   # TODO: Throw some better logging on here. It's possible to get line numbers
+   # TODO: {{{
+   #       ---
+   #       Throw some better logging on here. It's possible to get line numbers
    #       with ${BASH_LINENO[@]}, and the function stack with ${FUNCNAME[@]}.
    #       Using the latest function and line# would be invaluable to help the
    #       user determine if an error occurred in our code, or from abcde,
@@ -61,22 +55,28 @@ function cleanup {
    #
    #       Can write my own stack tracing function. That would actually be a
    #       very useful addition to @hre-utils.
-   #}}}
+   #       ---
+   #       }}}
+   # For now, until I get the above idea working:
+   stacktrace=''
+   if [[ ${#FUNCNAME[@]} -gt 1 ]] ; then
+      stacktrace="${FUNCNAME[1]}"
+   fi
 
    # No reason to bring up the html page on success:
    [[ $1 -eq 0 ]] && exit 0
 
    case $1 in 
-      1)   body="Disk type not CD or DVD: '$media_type'" ;;
-      2)   body="Unable to acquire lock."                ;;
-      3)   body="Exceeded retries waiting to read CD."   ;;
-      4)   body="DVD mountpoint not empty."              ;;
-      5)   body="CD staging area not clean."             ;;
-      6)   body="Config file not found."                 ;;
-      7)   body="Must be run as root."                   ;;
-      8*)  body="'abcde' failed with status ${1#8}"      ;;
-      9*)  body="'vobcopy' failed with status ${1#9}"    ;;
-      *)   body="Unknown error occurred."                ;;
+      1)   body="exit($1) :: Disk type not CD or DVD: '$media_type'"    ;;
+      2)   body="exit($1) :: Unable to acquire lock."                   ;;
+      3)   body="exit($1) :: Exceeded retries waiting to read disc."    ;;
+      4)   body="exit($1) :: DVD mountpoint not empty."                 ;;
+      5)   body="exit($1) :: CD staging area not clean."                ;;
+      6)   body="exit($1) :: Config file not found."                    ;;
+      7)   body="exit($1) :: Must be run as root."                      ;;
+      8*)  body="exit($1) :: 'abcde' failed with status ${1#8}"         ;;
+      9*)  body="exit($1) :: 'vobcopy' failed with status ${1#9}"       ;;
+      *)   body="exit($1) :: Unknown error occurred."                   ;;
    esac
 
    build_html
@@ -92,26 +92,37 @@ bash <<OUTEREOF
 cat <<EOF > "$HTML_FILE"
 <html>
   <body>
-    <h1> FAILURE </h1>
-    <h3> $( date '+%Y/%b/%d %H:%m' ) </h3>
+    <h1> LAST FAILURE </h1>
+    <h3> $( date '+%d %b, %H:%m' ) </h3>
     <p>
-      Error (perhaps) is: $body
+      $body
     </p>
     <hr>
     <p>
-      Note: Take any error warnings as only potential options.
+      Note: Take error descriptions with far more salt than Papa typically cooks with.<br>
+      <br>
       An exit 2, for example, can either mean media-magic was unable to acquire
       the lockfile, <em>or</em> any other intermediate command exited with its
-      status 2.
+      status 2.<br>
+      Likewise, error 82 <em>could</em> mean abcde exited with error code '2',
+      or another command exited with 82.<br>
+      <br>
+      "They're more like... 'guidelines'."
     </p>
     <hr>
-    <h3> last vobcopy log (tail -n 10) </h3>
+    $(
+       if [[ -n $stacktrace ]] ; then
+          echo "Last function called: <strong>$stacktrace()</strong>"
+          echo "<hr>"
+       fi
+    )
+    <h3> vobcopy log ($( stat --format '%y' "${DVD_LOGDIR}/vobcopy_1.2.0.log" )) </h3>
     <pre>
       $(
          while IFS=$'\n' read -r line ; do
-            echo "$line <br>"
-         done < <(tail -n 10 "${DVD_LOGDIR}/vobcopy_"*)
-       )
+            echo "${line}<br>"
+         done < <(tail -n 10 "${DVD_LOGDIR}/vobcopy_1.2.0.log")
+      )
     </pre>
   </body>
 </html>
@@ -177,11 +188,20 @@ Options:
    -h | --help       Print this message and exit
    -c | --config     \`xdg-open\`s the configuration file in your \$EDITOR
    -s | --status     \`xdg-open\`s the .html output file
-   -m | --music      \`xdg-open\`s CD directory
+   -c | --cd         \`xdg-open\`s CD directory
    -d | --dvd        \`xdg-open\`s DVD directory
 EOF
 
 exit $1
+}
+
+#───────────────────────────────────( debug )───────────────────────────────────
+function debug {
+   local text=$1
+   local lineno=${BASH_LINENO[0]}
+   local fname=$(basename "${BASH_SOURCE[0]}")
+
+   $_debug && printf "[${fname%.*}] DEBUG(%03d) ${text}\n" $lineno
 }
 
 #──────────────────────────────────( get ids )──────────────────────────────────
@@ -203,7 +223,7 @@ function get_cd_id {
    # 11: 41:55:23  188498 audio  false  no    2        no
    # 12: 45:31:47  204722 audio  false  no    2        no
    #
-   # Going to use the time offsets, in HH:MM:SS format, awking out non-digits.
+   # Using the time offsets, in HH:MM:SS format, awking out non-digits.
    # Example:
    #     00:02:00  =>  000200
    #     04:40:02  =>  044002
@@ -254,6 +274,11 @@ function get_dvd_id {
    #     02:08:09.266  =>  020809
    #     00:03:57.000  =>  000357
    #     00:06:03.333  =>  000603
+   #
+   # I do worry about just straight up stripping off the miliseconds, rather
+   # than rounding. What if we swap to a different back end ta usz HH:MM:SS,
+   # rounded to the nearest second. Eek. Would generate completely different
+   # hashes!
    #}}}
 
    dvd_title_lengths=$(
@@ -264,7 +289,7 @@ function get_dvd_id {
            }' < <(lsdvd /dev/sr0)
    )
 
-   hashed=$( md5sum <<< "$dvd_title_lengths")
+   hashed=$( md5sum <<< "$dvd_title_lengths" )
    echo "${hashed%% *}"
 }
 
@@ -272,8 +297,6 @@ function get_dvd_id {
 # Creates lockfile to ensure we don't have 2 concurrently running `abcde`s. Runs
 # in subshell & automatically drops the lock when ripping is completed.
 function rip_cd {
-   disc_id="$1"
-
    local lockfile="${DATADIR}/${TROGNAME}.lock"
    (
       flock -e -n 100 || exit 2
@@ -296,8 +319,6 @@ function rip_cd {
 
 
 function rip_dvd {
-   disc_id="$1"
-
    # Ensure mountpoint is empty before mounting:
    [[ -n $(ls -A "$DVD_MOUNTPOINT") ]] && exit 4
    mount /dev/sr0 "$DVD_MOUNTPOINT"
@@ -352,12 +373,15 @@ function rip_dvd {
    ln -sr "${OUTPUT_DVDS}/hash/${disc_id}"  "$friendly_path" 
 
    # Log reference from the disc_id to it's friendly path in our data file
-   echo "DVD $disc_id $friendly_path" > "${DATAFILE}"
+   echo "DVD $disc_id $friendly_path" >> "${DATAFILE}"
 }
 
 
 function already_ripped {
-   local id_row=$(grep ${disc_id// /_} "$DATAFILE")
+   debug "Checking if CD is in database"
+   debug "grep [${disc_id}] [$DATAFILE]"
+
+   local id_row=$(grep $disc_id "$DATAFILE")
    [[ -z "$id_row"  ]] && return 1
    
    read -r cd_type id path <<< "$id_row"
@@ -379,25 +403,42 @@ if [[ $# -gt 0 ]] ; then
             usage 0 ;;
 
       -s | --status)
-            [[ -n $DISPLAY ]] && exec xdg-open "$HTML_FILE"   ;;
+            [[ -n $DISPLAY ]] && exec xdg-open "$HTML_FILE" ;;
 
       -C | --config)
-            exec xdg-open "$CONF_FILE"   ;;
+            exec ${EDITOR:-vi} "$CONF_FILE" ;;
 
-      -c | --cd?)
-            exec xdg-open "$OUTPUT_CDS"  ;;
+      -c | --cd*)
+            if [[ -n $DISPLAY ]] ; then
+               exec xdg-open "$OUTPUT_CDS"
+            else
+               echo "$OUTPUT_CDS"
+            fi ;;
 
-      -d | --dvd?)
-            exec xdg-open "$OUTPUT_DVDS" ;;
+      -d | --dvd*)
+            if [[ -n $DISPLAY ]] ; then
+               exec xdg-open "$OUTPUT_DVDS"
+            else
+               echo  "$OUTPUT_DVDS"
+            fi ;;
+
+      -f | --find)
+            shift
+            grep -iE "$1" "${DATAFILE}" | column -t
+            ;;
 
       *)    usage 1 ;;
    esac
+   
+   exit 0
 fi
 
 #───────────────────────────────────( wait )────────────────────────────────────
 # Wait until the DVD/CD is actually mounted and readable. `wodim` seems to fully
 # pause execution (if a disk is inserted) until we can proceed. May be able to
 # drop the max retries from 10.
+
+debug "ENGAGE"
 
 declare -i counter=0
 while true ; do
@@ -410,24 +451,53 @@ while true ; do
    ((counter++))
 done
 
+debug "Disk read successfully"
+
 #──────────────────────────────( find media type )──────────────────────────────
 # Get udev info on cdrom, to be parsed later. (Saves us from making multiple
 # `udevadm` calls, they take a bit of time).
 udev_output="$( udevadm info -n /dev/sr0 -q property )"
 media_type=$( grep -oE 'ID_CDROM_MEDIA_(CD|DVD)' <<< "$udev_output" )
 
-#────────────────────────────────( rip || play )────────────────────────────────
-if already_ripped ; then
-   umount "$DVD_MOUNTPOINT" 2>/dev/null
-   [[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
-else
-   case $media_type in
-      ID_CDROM_MEDIA_CD)
-            rip_cd $( get_cd_id ) ;;
+debug "Type: ${media_type}"
+debug "beginning \`case\`"
 
-      ID_CDROM_MEDIA_DVD)
-            rip_dvd $( get_dvd_id ) ;;
+# TODO: {{{
+#       ---
+#       I had to rework how this section do. Used to be structured as follows:
+#          >>> if already_ripped
+#          ...    eject
+#          ...    exec xdg-open $FOUND_PATH
+#          ... else
+#          ...    case cd.type in:
+#          ...       CD)  rip_cd
+#          ...       DVD) rip_dvd
+#          ...       *)   throw UnknownDiscType
+#          ...    esac
+#          ... esac
+#       The new version has a different method to generate IDs depending if is a
+#       CD or DVD. Unfortunately that means we need to put it in the case
+#       statement. Sufficiently less clean than it was previously.
+#       ---
+#       }}}
+case $media_type in
+   ID_CDROM_MEDIA_CD)
+         disc_id=$( get_cd_id )
+         if already_ripped ; then
+            umount "$DVD_MOUNTPOINT" 2>/dev/null
+            [[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+         else
+            rip_cd
+         fi ;;
 
-      *) exit 1 ;;
-   esac
-fi
+   ID_CDROM_MEDIA_DVD)
+         disc_id=$( get_dvd_id )
+         if already_ripped ; then
+            umount "$DVD_MOUNTPOINT" 2>/dev/null
+            [[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+         else
+            rip_dvd
+         fi ;;
+
+   *) exit 1 ;;
+esac
