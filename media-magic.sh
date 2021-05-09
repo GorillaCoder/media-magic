@@ -32,7 +32,7 @@
 #         probably the actual movie itself). Should write an additional file to the
 #         DVD directory with the path to the track. Can then open with a:
 #            $ xdg-open $(cat ${path}/longest_track)
-#  5) [ ] Ended up using some implicitly globally declared variables from funcs
+#  5) [X] Ended up using some implicitly globally declared variables from funcs
 #         elseware. Maybe swap them to caps w/ a `declare -g` to make it more
 #         explicit.
 #           1. $friendly_path
@@ -111,6 +111,7 @@ cat <<EOF > "$HTML_FILE"
 EOF
 OUTEREOF
 }
+
 
 function build_html_failure {
 bash <<OUTEREOF
@@ -195,7 +196,7 @@ mkdir -p "$HTML_DIR"
 #────────────────────────────────( load config )────────────────────────────────
 # Shifted a few of the variables to a config file, for easier editing on the
 # user end:
-CONF_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/media-magic/config"
+CONF_FILE="${HOME}/.config/media-magic/config"
 [[ -e "${CONF_FILE}" ]] && source "${CONF_FILE}" || exit 6
 
 # Ensure directories from config file exist:
@@ -263,11 +264,14 @@ function get_cd_id {
       --no-analyze --no-cddb --quiet
    )
 
+   # Writing this to the CD_OUTPUT directory for later.
+   declare -g cd_info=$(cd-info "${cd_info_params}")
+
    disk_times=$(
       awk '$4=="audio" {
                gsub(/:/, "")
                print $2
-           }' < <(cd-info "${cd_info_params}")
+           }' <<< "$cd_info"
    )
 
    hashed=$( md5sum <<< "$disk_times" )
@@ -300,11 +304,6 @@ function get_dvd_id {
    #     02:08:09.266  =>  020809
    #     00:03:57.000  =>  000357
    #     00:06:03.333  =>  000603
-   #
-   # I do worry about just straight up stripping off the miliseconds, rather
-   # than rounding. What if we swap to a different back end ta usz HH:MM:SS,
-   # rounded to the nearest second. Eek. Would generate completely different
-   # hashes!
    #}}}
 
    local dvd_info=$(lsdvd /dev/sr0)
@@ -317,7 +316,7 @@ function get_dvd_id {
            }' <<< "$dvd_title_lengths"
    )
 
-   declare -G LONGEST_TITLE=$(
+   declare -G LONGEST_TRACK=$(
       awk '/^Longest track:/ {print $3}' <<< "$dvd_title_lengths"
    )
 
@@ -342,10 +341,13 @@ function rip_cd {
 
    # Sadly enough, this seems to be the best way to find the most recently
    # written directory.
-   path=$( find "$OUTPUT_CDS/flac" -type d -exec stat --format '%Y %n' {} \; \
-           | sort -nr \
-           | awk 'NR==1 {print $2}' )
+   declare -g friendly_path=$(
+         find "$OUTPUT_CDS/flac" -type d -exec stat --format '%Y %n' {} \; \
+         | sort -nr \
+         | awk 'NR==1 {print $2}'
+   )
 
+   echo "$cd_info" > "${path}/cd-info"
    echo "CD $disc_id $path" >> "$DATAFILE"
 }
 
@@ -376,9 +378,11 @@ function rip_dvd {
 
    # Write metadata to files in the DVD directory:
    #  1. Label may be useful if we fail the name generation below
-   #  2. LONGEST_TITLE was obtained from `lsdvd` in get_dvd_id()
-   echo "$label" > "${OUTPUT_DVDS}/processing/${disc_id}/label"
-   echo "$LONGEST_TITLE" > "${OUTPUT_DVDS}/processing/${disc_id}/longest_title"
+   #  2. Output of `lsdvd`
+   #  3. LONGEST_TRACK number was obtained from `lsdvd` in get_dvd_id()
+   echo "$label"         > "${OUTPUT_DVDS}/processing/${disc_id}/label"
+   echo "$dvd_info"      > "${OUTPUT_DVDS}/processing/${disc_id}/dvd-info"
+   echo "$LONGEST_TRACK" > "${OUTPUT_DVDS}/processing/${disc_id}/longest_track"
 
    # Move files out of processing/ once completed, to the 'hash' directory. The
    # name is the unique ID of the DVD, with spaces replaced by underscores.
@@ -397,7 +401,7 @@ function rip_dvd {
    _starting_friendly_path="${OUTPUT_DVDS}/name/${label}"
 
    # Loop until unique:
-   friendly_path="${_starting_friendly_path}"
+   declare -g friendly_path="${_starting_friendly_path}"
    while [[ -d "$friendly_path" ]] ; do
       idx=${idx:-2} # <- If no idx yet, start at 2
       friendly_path="${_starting_friendly_path}/name/${label}_${idx}"
