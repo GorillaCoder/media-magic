@@ -19,7 +19,7 @@ PROGDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd)
 #───────────────────────────────( dependencies )────────────────────────────────
 declare -a deps=(
    # General dependencies:
-   nginx
+   nginx lsdvd libcdio-utils
 
    # ABCDE dependencies:
    abcde lame eyed3 glyrc imagemagick
@@ -39,8 +39,6 @@ function install_to {
    install_params=(
       -D                   # Create intermediate directories if not found
       -m $mode             # chmod
-      -o giuliano          # chown (user)
-      -g giuliano          # chown (group)
       --backup -S '.bak'   # If $dest exists, backup as ${dest}.bak
       "${PROGDIR}/${src}"
       "${dest}" 
@@ -65,7 +63,7 @@ install_to 644 "${PROGDIR}/media-magic.service"  "/etc/systemd/system/"
 install_to 644 "${PROGDIR}/media-magic.conf" "/etc/nginx/conf.d/"
 
 # `media-magic.sh`'s own config file
-install_to 644 "${PROGDIR}/config" "${XDG_CONFIG_HOME:-${HOME}/.config}/media-magic/"
+install_to 644 "${PROGDIR}/config" "${HOME}/.config/media-magic/"
 
 #────────────────────────────────( load rules )─────────────────────────────────
 # Load rule(s):
@@ -80,5 +78,5 @@ sudo systemctl daemon-reload
 echo "Next steps:"
 echo " 1) Edit base deploy directory in /etc/abcde.conf (line 393)"
 echo "    e.g., /media/CDs/raw/"
-echo " 2) Edit default paths in ${XDG_CONFIG_HOME:-${HOME}/.config}/media-magic/config"
+echo " 2) Edit default paths in ${HOME}/.config/media-magic/config"
 echo -e "\nGodspeed.\n"

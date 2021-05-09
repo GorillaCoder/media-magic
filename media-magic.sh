@@ -23,13 +23,23 @@
 #
 #}}}
 #───────────────────────────────────( todo )─────────────────────────────────{{{
-#  1) Generate a single-file archival copy for music
-#  2) Swap my exit statues to negative values to make unique
-#  3) Maybe start a tmux session (if none exists), and run the script within it.
-#     Can then easily check the ongoing status on any machine, getting more than
-#     only a snapshot with `systemctl status`.
+#  1) [ ] Generate a single-file archival copy for music
+#  2) [ ] Swap my exit statues to negative values to make unique
+#  3) [ ] Maybe start a tmux session (if none exists), and run the script within it.
+#         Can then easily check the ongoing status on any machine, getting more than
+#         only a snapshot with `systemctl status`.
+#  4) [X] When using `lsdvd`, the final line shows the longest track (which is
+#         probably the actual movie itself). Should write an additional file to the
+#         DVD directory with the path to the track. Can then open with a:
+#            $ xdg-open $(cat ${path}/longest_track)
+#  5) [ ] Ended up using some implicitly globally declared variables from funcs
+#         elseware. Maybe swap them to caps w/ a `declare -g` to make it more
+#         explicit.
+#           1. $friendly_path
+#           2. $media_type
 #}}}
 #═══════════════════════════════════╡ INIT ╞════════════════════════════════════
+# Enables debug `print` statements throughout the script
 _debug=true
 
 # Are we root? Fuckin' better be.
@@ -63,23 +73,24 @@ function cleanup {
       stacktrace="${FUNCNAME[1]}"
    fi
 
-   # No reason to bring up the html page on success:
-   [[ $1 -eq 0 ]] && exit 0
+   if [[ $1 -eq 0 ]] ; then
+      build_html_success
+   else
+      case $1 in 
+         1)   exit_msg="exit($1) :: Disk type not CD or DVD: '$media_type'"    ;;
+         2)   exit_msg="exit($1) :: Unable to acquire lock."                   ;;
+         3)   exit_msg="exit($1) :: Exceeded retries waiting to read disc."    ;;
+         4)   exit_msg="exit($1) :: DVD mountpoint not empty."                 ;;
+         5)   exit_msg="exit($1) :: CD staging area not clean."                ;;
+         6)   exit_msg="exit($1) :: Config file not found."                    ;;
+         7)   exit_msg="exit($1) :: Must be run as root."                      ;;
+         8*)  exit_msg="exit($1) :: 'abcde' failed with status ${1#8}"         ;;
+         9*)  exit_msg="exit($1) :: 'vobcopy' failed with status ${1#9}"       ;;
+         *)   exit_msg="exit($1) :: Unknown error occurred."                   ;;
+      esac
+      build_html_failure
+   fi
 
-   case $1 in 
-      1)   body="exit($1) :: Disk type not CD or DVD: '$media_type'"    ;;
-      2)   body="exit($1) :: Unable to acquire lock."                   ;;
-      3)   body="exit($1) :: Exceeded retries waiting to read disc."    ;;
-      4)   body="exit($1) :: DVD mountpoint not empty."                 ;;
-      5)   body="exit($1) :: CD staging area not clean."                ;;
-      6)   body="exit($1) :: Config file not found."                    ;;
-      7)   body="exit($1) :: Must be run as root."                      ;;
-      8*)  body="exit($1) :: 'abcde' failed with status ${1#8}"         ;;
-      9*)  body="exit($1) :: 'vobcopy' failed with status ${1#9}"       ;;
-      *)   body="exit($1) :: Unknown error occurred."                   ;;
-   esac
-
-   build_html
    [[ -n $DISPLAY ]] && xdg-open "$HTML_FILE"
 
    # Preserve exit status
@@ -87,15 +98,29 @@ function cleanup {
 }
 
 
-function build_html {
+function build_html_success {
 bash <<OUTEREOF
 cat <<EOF > "$HTML_FILE"
 <html>
   <body>
-    <h1> LAST FAILURE </h1>
+    <hr>
+    <h1> SUCCESS </h1>
+    <p> Read ${media_type} to ${friendly_path} </p>
+  </body>
+</html>
+EOF
+OUTEREOF
+}
+
+function build_html_failure {
+bash <<OUTEREOF
+cat <<EOF > "$HTML_FILE"
+<html>
+  <body>
+    <h1> FAILURE </h1>
     <h3> $( date '+%d %b, %H:%m' ) </h3>
     <p>
-      $body
+      $exit_msg
     </p>
     <hr>
     <p>
@@ -182,14 +207,15 @@ mkdir -p "$OUTPUT_DVDS"
 #───────────────────────────────────( usage )───────────────────────────────────
 function usage {
 cat <<EOF
-USAGE: $(basename "${BASH_SOURCE[0]}") [-h] [-csmd]
+USAGE: $(basename "${BASH_SOURCE[0]}") [-h] [-csmd] [-f PATTERN]
 
 Options:
-   -h | --help       Print this message and exit
-   -c | --config     \`xdg-open\`s the configuration file in your \$EDITOR
-   -s | --status     \`xdg-open\`s the .html output file
-   -c | --cd         \`xdg-open\`s CD directory
-   -d | --dvd        \`xdg-open\`s DVD directory
+   -h | --help          Print this message and exit
+   -c | --config        \`xdg-open\`s the configuration file in your \$EDITOR
+   -s | --status        \`xdg-open\`s the .html output file
+   -c | --cd            \`xdg-open\`s CD directory
+   -d | --dvd           \`xdg-open\`s DVD directory
+   -f | --find PATTERN  \`grep -iE PATTERN\`
 EOF
 
 exit $1
@@ -281,12 +307,18 @@ function get_dvd_id {
    # hashes!
    #}}}
 
+   local dvd_info=$(lsdvd /dev/sr0)
+
    dvd_title_lengths=$(
       awk '$1=="Title:" {
                sub(/\.[[:digit:]]{3}/, "")
                gsub(/:/, "")
                print $4
-           }' < <(lsdvd /dev/sr0)
+           }' <<< "$dvd_title_lengths"
+   )
+
+   declare -G LONGEST_TITLE=$(
+      awk '/^Longest track:/ {print $3}' <<< "$dvd_title_lengths"
    )
 
    hashed=$( md5sum <<< "$dvd_title_lengths" )
@@ -342,8 +374,11 @@ function rip_dvd {
    # status of '4' from vobcopy.
    [[ $? -ne 0 ]] && exit 9$?
 
-   # `echo` the label to a file within the directory, just in case:
+   # Write metadata to files in the DVD directory:
+   #  1. Label may be useful if we fail the name generation below
+   #  2. LONGEST_TITLE was obtained from `lsdvd` in get_dvd_id()
    echo "$label" > "${OUTPUT_DVDS}/processing/${disc_id}/label"
+   echo "$LONGEST_TITLE" > "${OUTPUT_DVDS}/processing/${disc_id}/longest_title"
 
    # Move files out of processing/ once completed, to the 'hash' directory. The
    # name is the unique ID of the DVD, with spaces replaced by underscores.

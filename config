@@ -6,11 +6,11 @@ DVD_MOUNTPOINT='/mnt/cdrom'
 
 # Directory for the CD output. Ensure this matches the OUTPUTDIR in abcde.conf
 # on line 393.
-OUTPUT_CDS='/media/CDs'
+OUTPUT_CDS='/media/media/CDs'
 
 #  Base path of raw DVD rips. Creates this:
 #   $OUTPUT_DVDS/
 #     ├─ processing/   (while ripping)
 #     ├─ hash/         (when completed)
 #     └─ name/         (linked here)
-OUTPUT_DVDS='/media/DVDs/raw'
+OUTPUT_DVDS='/media/media/DVDs/raw'
