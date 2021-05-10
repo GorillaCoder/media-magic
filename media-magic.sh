@@ -1,5 +1,5 @@
 #!/bin/bash
-# vim:ft=bash:foldmethod=marker:commentstring=#%s:foldclose=all
+# vim:ft=bash:foldmethod=marker:commentstring=#%s:foldclose=all:expandtab:sw=3:ts=3:sts=3
 #
 # changelog
 #  2021-05-02  :: Created
@@ -37,20 +37,39 @@
 #         explicit.
 #           1. $friendly_path
 #           2. $media_type
+#  6) [ ] Vars for executables. Must use `gawk`
+#  7) [ ] Easier method to edit the database
+#  8) [ ] Ability to call individual functions. E.g., only output the generated
+#         id, but don't play or rip
 #}}}
 #═══════════════════════════════════╡ INIT ╞════════════════════════════════════
+#                               hacky tmp fixes
 # Enables debug `print` statements throughout the script
 _debug=true
 
+# TODO: All the initial dumb settings we need to do for now. Come back and fix
+#       these later
+HOME=${HOME:-/root}
+umount /dev/sr0 2>/dev/null
+
+LOGFILE=/var/log/media-magic
+#-------------------------------------------------------------------------------
+
 # Are we root? Fuckin' better be.
-[[ $(id -u) -ne 0 ]] && exit 7
+if [[ $(id -u) -ne 0 ]] ; then
+   echo "Must be run as root."
+   exit 7
+fi
 
 trap 'cleanup $?' EXIT INT
 
 function cleanup {
+   # TODO: HACKY_GARBAGE: :DEBUG:
+   [[ $1 -gt 240 ]] && exit 0
+   # Gives us 15 exits of our 'own'.
+
    umount "$DVD_MOUNTPOINT" 2>/dev/null
-   # DEBUG:
-   #eject
+   eject
 
    # TODO: {{{
    #       ---
@@ -105,7 +124,7 @@ cat <<EOF > "$HTML_FILE"
   <body>
     <hr>
     <h1> SUCCESS </h1>
-    <p> Read ${media_type} to ${friendly_path} </p>
+    <p> Read ${media_type} to ${friendly_path:-$FOUND_PATH} </p>
   </body>
 </html>
 EOF
@@ -143,13 +162,11 @@ cat <<EOF > "$HTML_FILE"
        fi
     )
     <h3> vobcopy log ($( stat --format '%y' "${DVD_LOGDIR}/vobcopy_1.2.0.log" )) </h3>
-    <pre>
-      $(
+    <pre>$(
          while IFS=$'\n' read -r line ; do
             echo "${line}<br>"
          done < <(tail -n 10 "${DVD_LOGDIR}/vobcopy_1.2.0.log")
-      )
-    </pre>
+      )</pre>
   </body>
 </html>
 EOF
@@ -200,9 +217,12 @@ CONF_FILE="${HOME}/.config/media-magic/config"
 [[ -e "${CONF_FILE}" ]] && source "${CONF_FILE}" || exit 6
 
 # Ensure directories from config file exist:
+mkdir -p "$DVD_MOUNTPOINT"
 mkdir -p "$OUTPUT_CDS"
-mkdir -p "$OUTPUT_DVDS"
-
+mkdir -p "${OUTPUT_DVDS}/processing"
+mkdir -p "${OUTPUT_DVDS}/hash"
+mkdir -p "${OUTPUT_DVDS}/name"
+# TODO: do a `mkdir` here better.
 
 #═════════════════════════════════╡ FUNCTIONS ╞═════════════════════════════════
 #───────────────────────────────────( usage )───────────────────────────────────
@@ -228,7 +248,7 @@ function debug {
    local lineno=${BASH_LINENO[0]}
    local fname=$(basename "${BASH_SOURCE[0]}")
 
-   $_debug && printf "[${fname%.*}] DEBUG(%03d) ${text}\n" $lineno
+   $_debug && printf "[${fname%.*}] DEBUG(%03d) ${text}\n" $lineno | tee -a "$LOGFILE"
 }
 
 #──────────────────────────────────( get ids )──────────────────────────────────
@@ -265,13 +285,13 @@ function get_cd_id {
    )
 
    # Writing this to the CD_OUTPUT directory for later.
-   declare -g cd_info=$(cd-info "${cd_info_params}")
+   declare -g cd_info=$(cd-info "${cd_info_params[@]}")
 
    disk_times=$(
-      awk '$4=="audio" {
-               gsub(/:/, "")
-               print $2
-           }' <<< "$cd_info"
+      gawk '$4=="audio" {
+                gsub(/:/, "")
+                print $2
+            }' <<< "$cd_info"
    )
 
    hashed=$( md5sum <<< "$disk_times" )
@@ -306,18 +326,18 @@ function get_dvd_id {
    #     00:06:03.333  =>  000603
    #}}}
 
-   local dvd_info=$(lsdvd /dev/sr0)
+   declare -g dvd_info=$(lsdvd /dev/sr0)
 
    dvd_title_lengths=$(
       awk '$1=="Title:" {
                sub(/\.[[:digit:]]{3}/, "")
                gsub(/:/, "")
                print $4
-           }' <<< "$dvd_title_lengths"
+           }' <<< "$dvd_info"
    )
 
    declare -G LONGEST_TRACK=$(
-      awk '/^Longest track:/ {print $3}' <<< "$dvd_title_lengths"
+      awk '/^Longest track:/ {print $3}' <<< "$dvd_info"
    )
 
    hashed=$( md5sum <<< "$dvd_title_lengths" )
@@ -353,6 +373,13 @@ function rip_cd {
 
 
 function rip_dvd {
+   # To avoid race condition between Kubuntu's auto DVD mount:
+   existing_mountpoint=$(
+         lsblk --list --noheadings -o name,mountpoint \
+         | awk '$1=="sr0" {print $2}'
+   )
+   [[ "$existing_mountpoint" -ne "$DVD_MOUNTPOINT" ]] && umount /dev/sr0
+
    # Ensure mountpoint is empty before mounting:
    [[ -n $(ls -A "$DVD_MOUNTPOINT") ]] && exit 4
    mount /dev/sr0 "$DVD_MOUNTPOINT"
@@ -421,9 +448,13 @@ function already_ripped {
    debug "grep [${disc_id}] [$DATAFILE]"
 
    local id_row=$(grep $disc_id "$DATAFILE")
-   [[ -z "$id_row"  ]] && return 1
+   [[ -z "$id_row"  ]] && {
+      debug "Not found in database"
+      return 1
+   }
    
    read -r cd_type id path <<< "$id_row"
+   debug "FOUND IN DATABASE: $id_row"
    
    # Sets global var of $FOUND_PATH, so we may access from the `case` statement,
    # or later use in the script to auto-start the media.
@@ -466,10 +497,26 @@ if [[ $# -gt 0 ]] ; then
             grep -iE "$1" "${DATAFILE}" | column -t
             ;;
 
+      --disable)
+            debug "Creating disable file"
+            touch "${DATADIR}/disable"
+            ;;
+
+      --enable)
+            debug "Removing disable file"
+            rm "${DATADIR}/disable" 2>/dev/null
+            ;;
+
       *)    usage 1 ;;
    esac
    
-   exit 0
+   exit -2
+fi
+
+# Don't do anything if --disable is set
+if [[ -e "${DATADIR}/disable" ]] ; then
+	debug "Disable file found. Exiting."
+	exit -1
 fi
 
 #───────────────────────────────────( wait )────────────────────────────────────
@@ -487,6 +534,7 @@ while true ; do
    # loaded. Ref: https://linux.die.net/man/2/wodim 
    wodim dev=/dev/sr0 -atip &> /dev/null && break  
    
+   sleep 1
    ((counter++))
 done
 
@@ -522,18 +570,24 @@ debug "beginning \`case\`"
 case $media_type in
    ID_CDROM_MEDIA_CD)
          disc_id=$( get_cd_id )
+         debug "ID determined to be $disc_id"
          if already_ripped ; then
             umount "$DVD_MOUNTPOINT" 2>/dev/null
-            [[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+            wall "Disc already ripped: $(basename "${FOUND_PATH}")"
+            #[[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+            #notify-send --urgency=critical "Disc already ripped: $(basename "${FOUND_PATH}")"
          else
             rip_cd
          fi ;;
 
    ID_CDROM_MEDIA_DVD)
          disc_id=$( get_dvd_id )
+         debug "ID determined to be $disc_id"
          if already_ripped ; then
             umount "$DVD_MOUNTPOINT" 2>/dev/null
-            [[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+            wall "Disc already ripped: $(basename "${FOUND_PATH}")"
+            #[[ -n $DISPLAY ]] && exec xdg-open "$FOUND_PATH"
+            #notify-send --urgency=critical "Disc already ripped: $(basename "${FOUND_PATH}")"
          else
             rip_dvd
          fi ;;

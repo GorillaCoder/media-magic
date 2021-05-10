@@ -19,21 +19,22 @@ PROGDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd)
 #───────────────────────────────( dependencies )────────────────────────────────
 declare -a deps=(
    # General dependencies:
-   nginx lsdvd libcdio-utils
+   gawk nginx lsdvd libcdio-utils libnotify-bin
 
    # ABCDE dependencies:
    abcde lame eyed3 glyrc imagemagick
-   cdparanoia flac cdrecord cd-diskid wodi
+   cdparanoia flac cdrecord cd-discid
 )
 
-sudo apt-get update -y
-sudo apt-get install -y "${deps[@]}"
+# Disabling, dependencies installed.
+#sudo apt-get update -y
+#sudo apt-get install -y "${deps[@]}"
 
 #───────────────────────────────( deploy files  )───────────────────────────────
 echo "Copying configuration & script files..."
 
 function install_to {
-   mode=$1 ; src=$2 ; des=$3
+   mode=$1 ; src=$2 ; dest=$3
    echo "  ...copying ${src} -> ${dest}"
 
    install_params=(
@@ -48,7 +49,7 @@ function install_to {
 }
 
 # `media-magic` bash script
-install_to 755 "${PROGDIR}/media-magic.sh" "/usr/local/bin/"
+install_to 755 "media-magic.sh" "/usr/local/bin/"
 
 # `abcde` config file:
 install_to 644 "abcde.conf" "/etc/"
@@ -57,13 +58,13 @@ install_to 644 "abcde.conf" "/etc/"
 install_to 644 "99-media-magic.rules" "/etc/udev/rules.d/"
 
 # `systemd` service:
-install_to 644 "${PROGDIR}/media-magic.service"  "/etc/systemd/system/"
+install_to 644 "media-magic.service"  "/etc/systemd/system/"
 
 # `nginx` config
-install_to 644 "${PROGDIR}/media-magic.conf" "/etc/nginx/conf.d/"
+install_to 644 "media-magic.conf" "/etc/nginx/conf.d/"
 
 # `media-magic.sh`'s own config file
-install_to 644 "${PROGDIR}/config" "${HOME}/.config/media-magic/"
+install_to 644 "config" "${HOME}/.config/media-magic/"
 
 #────────────────────────────────( load rules )─────────────────────────────────
 # Load rule(s):
@@ -75,8 +76,8 @@ echo "Reloading systemctl"
 sudo systemctl daemon-reload
 
 #────────────────────────────────( next steps )─────────────────────────────────
-echo "Next steps:"
-echo " 1) Edit base deploy directory in /etc/abcde.conf (line 393)"
-echo "    e.g., /media/CDs/raw/"
-echo " 2) Edit default paths in ${HOME}/.config/media-magic/config"
-echo -e "\nGodspeed.\n"
+#echo "Next steps:"
+#echo " 1) Edit base deploy directory in /etc/abcde.conf (line 393)"
+#echo "    e.g., /media/CDs/raw/"
+#echo " 2) Edit default paths in ${HOME}/.config/media-magic/config"
+#echo -e "\nGodspeed.\n"
